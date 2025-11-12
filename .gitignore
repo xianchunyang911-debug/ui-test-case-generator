@@ -36,3 +36,34 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
+
+# Test files (不需要部署)
+test_*.py
+TEST_*.md
+
+# Documentation (不需要部署，除了规则文档)
+*说明.md
+*指南.md
+*演示.md
+*总结.md
+*计划.md
+*方案.md
+开发和部署规范.md
+快速开始.md
+功能更新说明.md
+
+# Backend and Frontend (不需要部署到Streamlit)
+backend/
+frontend/
+deploy.sh
+
+# Kiro configuration (不需要部署)
+.kiro/
+
+# Other Python files (不需要部署)
+csv_to_excel_multi_sheet.py
+test_document.md
+
+# Keep these files (需要保留的规则文档)
+!AI生成UI走查用例规则.md
+!AI生成Excel多Sheet UI走查用例规则.md
