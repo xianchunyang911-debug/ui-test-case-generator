@@ -25,22 +25,21 @@ class ModuleSelector:
         """
         SessionStateManager.init_session_state()
     
-    def render_module_list(self, modules: List[Module]) -> None:
+    def render_module_list(self, modules: List[Module], case_type: str = '标准UI走查') -> None:
         """
         渲染模块选择列表
         
         Args:
             modules: 模块列表
+            case_type: 用例类型（'标准UI走查' 或 '竞品对标走查'）
         """
         if not modules:
             st.warning("未识别到任何模块")
             return
         
-        # 显示模块总数
+        # 显示模块总数和提示
         st.markdown(f"📋 识别到 **{len(modules)}** 个模块")
-        
-        # 快捷操作按钮
-        self._render_action_buttons()
+        st.caption("💡 勾选需要生成用例的模块")
         
         st.divider()
         
@@ -57,44 +56,106 @@ class ModuleSelector:
         # 获取当前选中的模块ID集合
         selected_ids = SessionStateManager.get_selected_module_ids()
         
-        # 使用容器为模块列表添加视觉边界
+        # 使用容器为模块列表和建议选项添加统一的视觉边界
         with st.container(border=True):
             st.markdown("### 📦 模块列表")
             
-            for module in filtered_modules:
+            # 获取当前建议选项状态
+            categories = SessionStateManager.get_suggested_categories()
+            
+            # 使用两列布局优化模块显示
+            col1, col2 = st.columns(2)
+            
+            for idx, module in enumerate(filtered_modules):
                 # 为每个模块创建唯一的key
                 checkbox_key = f"module_checkbox_{module.id}"
                 
                 # 检查模块是否被选中
                 is_selected = module.id in selected_ids
                 
-                # 创建复选框 - 使用更好的列布局
-                col1, col2 = st.columns([0.06, 0.94])
+                # 交替放置在两列中
+                target_col = col1 if idx % 2 == 0 else col2
                 
-                with col1:
-                    # 使用checkbox，并通过on_change回调更新状态
+                with target_col:
+                    # 构建显示文本
+                    label_text = f"**{module.name}**"
+                    help_text = module.description if module.description else None
+                    
+                    # 使用checkbox
                     checked = st.checkbox(
-                        label="",
+                        label=label_text,
                         value=is_selected,
                         key=checkbox_key,
-                        label_visibility="collapsed",
-                        on_change=self._on_module_toggle,
-                        args=(module.id,)
+                        help=help_text
                     )
+                    
+                    # 实时更新选中状态
+                    if checked and module.id not in selected_ids:
+                        selected_ids.add(module.id)
+                        SessionStateManager.set_selected_module_ids(selected_ids)
+                    elif not checked and module.id in selected_ids:
+                        selected_ids.discard(module.id)
+                        SessionStateManager.set_selected_module_ids(selected_ids)
+            
+            # 添加自定义模块功能
+            st.divider()
+            with st.expander("➕ 添加自定义模块", expanded=False):
+                st.caption("💡 如果模块过于复杂，可以手动拆分成多个子模块")
                 
-                with col2:
-                    # 显示模块信息 - 高亮显示选中的模块
-                    if is_selected:
-                        module_info = f"✅ **{module.name}**"
-                    else:
-                        module_info = f"**{module.name}**"
+                new_module_name = st.text_input(
+                    "模块名称",
+                    key="new_module_name_input",
+                    placeholder="例如：订单列表、订单详情"
+                )
+                
+                col_add, col_clear = st.columns([3, 1])
+                with col_add:
+                    if st.button("添加模块", use_container_width=True, type="primary"):
+                        if new_module_name and new_module_name.strip():
+                            self._add_custom_module(new_module_name.strip(), modules)
+                        else:
+                            st.error("请输入模块名称")
+                
+                with col_clear:
+                    if st.button("清空", use_container_width=True):
+                        # 清空输入框（通过rerun实现）
+                        st.rerun()
+            
+            # 只在标准UI走查模式下显示建议选项
+            if case_type == '标准UI走查':
+                st.divider()
+                st.markdown("### 🎯 建议选项")
+                st.markdown("💡 选择以下选项可以让AI生成更有针对性的测试用例")
+                
+                # 建议选项说明
+                category_descriptions = {
+                    '全局页面': '包含导航、头部、底部等通用组件的测试',
+                    '场景流程': '包含多步骤操作流程的测试',
+                    '异常场景': '包含错误处理、边界条件的测试',
+                    '上下游验证': '包含数据流转、接口调用的测试'
+                }
+                
+                # 使用两列布局优化建议选项显示
+                col1, col2 = st.columns(2)
+                
+                items = list(category_descriptions.items())
+                for idx, (category_name, description) in enumerate(items):
+                    checkbox_key = f"category_{category_name}"
+                    is_selected = categories.get(category_name, False)
                     
-                    if module.description:
-                        module_info += f" - {module.description}"
-                    if module.type:
-                        module_info += f" `{module.type}`"
+                    # 交替放置在两列中
+                    target_col = col1 if idx % 2 == 0 else col2
                     
-                    st.markdown(module_info)
+                    with target_col:
+                        checked = st.checkbox(
+                            label=f"**{category_name}**",
+                            value=is_selected,
+                            key=checkbox_key,
+                            on_change=self._on_category_toggle,
+                            args=(category_name,),
+                            help=description
+                        )
+
         
         # 显示选中数量
         st.divider()
@@ -109,27 +170,7 @@ class ModuleSelector:
         else:
             st.info(f"📊 已选择: **{selected_count}/{total_count}** 个模块")
     
-    def _render_action_buttons(self):
-        """渲染快捷操作按钮"""
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if st.button("✅ 全选", use_container_width=True,
-                        help="选中所有模块"):
-                SessionStateManager.select_all_modules()
-                st.rerun()
-        
-        with col2:
-            if st.button("❌ 全不选", use_container_width=True,
-                        help="取消选中所有模块"):
-                SessionStateManager.deselect_all_modules()
-                st.rerun()
-        
-        with col3:
-            if st.button("🔄 重新识别", use_container_width=True,
-                        help="清除当前识别结果，返回上传页面重新识别"):
-                SessionStateManager.clear_recognition_data()
-                st.rerun()
+
     
     def _render_search_box(self) -> str:
         """
@@ -170,55 +211,8 @@ class ModuleSelector:
         
         return filtered
     
-    def _on_module_toggle(self, module_id: str):
-        """
-        模块复选框切换回调
-        
-        Args:
-            module_id: 模块ID
-        """
-        SessionStateManager.toggle_module_selection(module_id)
-    
-    def render_suggested_categories(self) -> None:
-        """渲染建议选项"""
-        st.divider()
-        
-        # 使用容器为建议选项添加视觉边界
-        with st.container(border=True):
-            st.markdown("### 🎯 建议选项")
-            st.markdown("💡 选择以下选项可以让AI生成更有针对性的测试用例")
-            
-            # 获取当前建议选项状态
-            categories = SessionStateManager.get_suggested_categories()
-            
-            # 建议选项说明
-            category_descriptions = {
-                '全局页面': '包含导航、头部、底部等通用组件的测试',
-                '场景流程': '包含多步骤操作流程的测试',
-                '异常场景': '包含错误处理、边界条件的测试',
-                '上下游验证': '包含数据流转、接口调用的测试'
-            }
-            
-            # 使用两列布局优化建议选项显示
-            col1, col2 = st.columns(2)
-            
-            items = list(category_descriptions.items())
-            for idx, (category_name, description) in enumerate(items):
-                checkbox_key = f"category_{category_name}"
-                is_selected = categories.get(category_name, False)
-                
-                # 交替放置在两列中
-                target_col = col1 if idx % 2 == 0 else col2
-                
-                with target_col:
-                    checked = st.checkbox(
-                        label=f"**{category_name}**",
-                        value=is_selected,
-                        key=checkbox_key,
-                        on_change=self._on_category_toggle,
-                        args=(category_name,),
-                        help=description
-                    )
+
+
     
     def _on_category_toggle(self, category_name: str):
         """
@@ -230,6 +224,46 @@ class ModuleSelector:
         categories = SessionStateManager.get_suggested_categories()
         current_value = categories.get(category_name, False)
         SessionStateManager.set_suggested_category(category_name, not current_value)
+    
+    def _add_custom_module(self, module_name: str, existing_modules: List[Module]) -> None:
+        """
+        添加自定义模块
+        
+        Args:
+            module_name: 模块名称
+            existing_modules: 现有模块列表
+        """
+        # 检查是否重复
+        for module in existing_modules:
+            if module.name == module_name:
+                st.warning(f"⚠️ 模块 '{module_name}' 已存在")
+                return
+        
+        # 创建自定义模块
+        import uuid
+        custom_module = Module(
+            id=f"custom_{uuid.uuid4().hex[:8]}",
+            name=module_name,
+            description="用户自定义模块",
+            type="自定义",
+            level=2,
+            selected=True,  # 默认选中
+            is_custom=True
+        )
+        
+        # 添加到模块列表
+        existing_modules.append(custom_module)
+        
+        # 更新session state
+        SessionStateManager.set_modules(existing_modules)
+        
+        # 自动选中新添加的模块
+        selected_ids = SessionStateManager.get_selected_module_ids()
+        selected_ids.add(custom_module.id)
+        SessionStateManager.set_selected_module_ids(selected_ids)
+        
+        st.success(f"✅ 已添加模块: {module_name}")
+        st.rerun()
     
     def get_selected_modules(self) -> List[Module]:
         """

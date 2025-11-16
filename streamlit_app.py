@@ -64,7 +64,7 @@ if 'generated_file' not in st.session_state and 'data_cleared' not in st.session
 
 # 标题
 st.title("🎨 UI走查用例生成助手")
-st.caption("自动生成UI走查用例 - 简化版")
+st.caption("上传需求文档，一键生成UI走查用例，提升走查效率")
 
 # 数据持久化提示
 if 'generated_file' in st.session_state or 'modules_recognized' in st.session_state:
@@ -90,9 +90,30 @@ if 'generated_file' in st.session_state or 'modules_recognized' in st.session_st
             st.session_state['data_cleared'] = True
             st.rerun()
 
-# 侧边栏 - AI配置
+# 侧边栏 - 配置
 with st.sidebar:
-    st.header("⚙️ AI配置")
+    # 用例类型选择（作为标题）
+    st.header("📋 用例类型")
+    
+    # 增加单选按钮之间的间距
+    st.markdown("""
+    <style>
+    div[role="radiogroup"] label {
+        margin-bottom: 8px !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    case_type = st.radio(
+        "选择类型",
+        options=["标准UI走查", "竞品对标走查"],
+        label_visibility="collapsed"
+    )
+    
+    # 保存到session state
+    st.session_state['case_type'] = case_type
+    
+    st.divider()
     
     use_ai = st.checkbox("使用AI生成", value=False)
     
@@ -224,11 +245,14 @@ with tab1:
                     try:
                         # 创建识别器
                         use_ai_gen = use_ai and 'ai_api_key' in st.session_state
+                        case_type = st.session_state.get('case_type', '标准UI走查')
+                        
                         if use_ai_gen:
                             st.info("💡 使用AI智能识别模式")
                             generator = AIGenerator(
                                 provider=st.session_state.get('ai_provider', 'deepseek'),
-                                api_key=st.session_state.get('ai_api_key')
+                                api_key=st.session_state.get('ai_api_key'),
+                                case_type=case_type
                             )
                             recognizer = ModuleRecognizer(ai_generator=generator)
                         else:
@@ -254,7 +278,7 @@ with tab1:
                         st.session_state['selected_module_ids'] = {module.id for module in modules}
                         
                         st.success(f"✅ 识别成功！共识别到 {len(modules)} 个模块")
-                        st.balloons()
+                        st.toast("模块识别成功！", icon="✅")
                         st.rerun()
                         
                     except Exception as e:
@@ -285,17 +309,15 @@ with tab1:
             # 获取模块列表（从SessionStateManager获取，会自动转换为Module对象）
             modules = SessionStateManager.get_modules()
             
+            # 获取用例类型
+            case_type = st.session_state.get('case_type', '标准UI走查')
+            
             # 如果模块数量大于10，使用可折叠显示
             if len(modules) > 10:
                 with st.expander(f"📦 模块列表 ({len(modules)} 个)", expanded=True):
-                    selector.render_module_list(modules)
+                    selector.render_module_list(modules, case_type=case_type)
             else:
-                selector.render_module_list(modules)
-            
-            st.divider()
-            
-            # 渲染建议选项
-            selector.render_suggested_categories()
+                selector.render_module_list(modules, case_type=case_type)
             
             st.divider()
             
@@ -311,7 +333,8 @@ with tab1:
                 st.info("💡 提示：在上方的模块列表中勾选需要生成用例的模块")
             else:
                 st.success(f"✅ 已选择 {len(selected_modules)} 个模块，准备生成用例")
-                if selected_categories:
+                # 只在标准UI走查模式下显示建议选项信息
+                if case_type == '标准UI走查' and selected_categories:
                     st.info(f"🎯 已选择建议选项: {', '.join(selected_categories)}")
             
             if st.button("🚀 生成UI走查用例", type="primary", use_container_width=True, disabled=generate_disabled,
@@ -320,15 +343,18 @@ with tab1:
                     try:
                         # 创建协调器
                         use_ai_gen = use_ai and 'ai_api_key' in st.session_state
+                        case_type = st.session_state.get('case_type', '标准UI走查')
+                        
                         if use_ai_gen:
-                            st.info("💡 使用AI生成模式，生成更智能的测试用例")
+                            st.info(f"💡 使用AI生成模式，生成更智能的测试用例（{case_type}）")
                             generator = AIGenerator(
                                 provider=st.session_state.get('ai_provider', 'deepseek'),
-                                api_key=st.session_state.get('ai_api_key')
+                                api_key=st.session_state.get('ai_api_key'),
+                                case_type=case_type
                             )
                         else:
-                            st.info("💡 使用模板生成模式")
-                            generator = AIGenerator()
+                            st.info(f"💡 使用模板生成模式（{case_type}）")
+                            generator = AIGenerator(case_type=case_type)
                         
                         coordinator = TestCaseCoordinator(ai_generator=generator)
                         
@@ -346,9 +372,18 @@ with tab1:
                             st.warning("💡 建议：检查文档内容或尝试使用AI生成模式")
                             st.stop()
                         
+                        # 根据用例类型确定编号前缀和文件名
+                        case_type = st.session_state.get('case_type', '标准UI走查')
+                        if case_type == '竞品对标走查':
+                            prefix = 'CP-TC'
+                            type_label = '竞品对标UI走查用例'
+                        else:
+                            prefix = 'UI-TC'
+                            type_label = 'UI走查用例'
+                        
                         # 添加用例编号
                         for i, case in enumerate(all_cases, 1):
-                            case['用例编号'] = f'UI-TC{i:03d}'
+                            case['用例编号'] = f'{prefix}{i:03d}'
                             case['是否通过'] = '待测试'
                             case['截图/备注'] = ''
                         
@@ -361,7 +396,7 @@ with tab1:
                         
                         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                         filename = st.session_state.get('uploaded_filename', 'document').replace('.md', '').replace('.txt', '').replace('.docx', '')
-                        csv_file = output_dir / f"{filename}-UI走查用例-{timestamp}.csv"
+                        csv_file = output_dir / f"{filename}-{type_label}-{timestamp}.csv"
                         
                         headers = ['用例编号', '页面/模块', '检查点', '设计原则', '检查项', 
                                   '优先级', '预期结果/设计标准', '是否通过', '截图/备注']
@@ -376,8 +411,9 @@ with tab1:
                         st.session_state['all_cases'] = all_cases
                         
                         st.success(f"✅ 生成完成！共生成 {len(all_cases)} 个用例，涉及 {len(selected_modules)} 个模块")
+                        st.info(f"📋 用例类型: {case_type}")
                         st.info(f"📁 文件已保存至: {csv_file.name}")
-                        st.balloons()
+                        st.toast("用例生成成功！", icon="✅")
                         
                     except Exception as e:
                         st.error(f"❌ 生成失败: {str(e)}")
@@ -401,18 +437,35 @@ with tab2:
         
         st.divider()
         
-        # 下载按钮
+        # 文件名自定义
+        st.subheader("📥 下载CSV文件")
+        
         generated_file = st.session_state.get('generated_file')
         if generated_file and os.path.exists(generated_file):
+            # 提取默认文件名（不含扩展名）
+            default_name = os.path.basename(generated_file).replace('.csv', '')
+            
+            # 文件名输入框
+            custom_filename = st.text_input(
+                "自定义文件名",
+                value=default_name,
+                help="修改文件名后点击下载按钮。文件会下载到浏览器的默认下载目录（通常是 ~/Downloads/）",
+                key="csv_filename"
+            )
+            
+            # 显示下载路径提示
+            st.caption("💡 文件将下载到浏览器的默认下载目录（通常是 ~/Downloads/ 或 ~/下载/）")
+            
             with open(generated_file, 'r', encoding='utf-8') as f:
                 csv_data = f.read()
             
             st.download_button(
                 label="📥 下载CSV文件",
                 data=csv_data,
-                file_name=os.path.basename(generated_file),
+                file_name=f"{custom_filename}.csv",
                 mime="text/csv",
-                use_container_width=True
+                use_container_width=True,
+                help="点击下载CSV文件到浏览器默认下载目录"
             )
         
         st.divider()
@@ -602,12 +655,25 @@ with tab2:
                         excel_data = f.read()
                     
                     st.success(f"✅ 转换成功！Excel文件已生成")
+                    
+                    # 文件名自定义
+                    default_excel_name = excel_file.name.replace('.xlsx', '')
+                    custom_excel_filename = st.text_input(
+                        "自定义Excel文件名",
+                        value=default_excel_name,
+                        help="修改文件名后点击下载按钮。文件会下载到浏览器的默认下载目录",
+                        key="excel_filename"
+                    )
+                    
+                    st.caption("💡 文件将下载到浏览器的默认下载目录（通常是 ~/Downloads/ 或 ~/下载/）")
+                    
                     st.download_button(
                         label="📥 下载Excel文件",
                         data=excel_data,
-                        file_name=excel_file.name,
+                        file_name=f"{custom_excel_filename}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
+                        use_container_width=True,
+                        help="点击下载Excel文件到浏览器默认下载目录"
                     )
                     
                     st.info(f"📊 Excel文件包含 {len(cases_by_module)} 个Sheet（1个汇总 + {len(cases_by_module)} 个模块）")
