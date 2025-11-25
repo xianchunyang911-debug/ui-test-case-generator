@@ -147,7 +147,9 @@ with tab1:
         ### 快速开始
         
         **第一步：上传文档**
-        - 支持格式：Markdown (.md)、文本文件 (.txt)、Word文档 (.docx)
+        - 支持格式：Markdown (.md)、文本文件 (.txt)、Word文档 (.docx)、PDF文档 (.pdf)
+        - 支持同时上传多个文档，系统会自动合并处理
+        - PDF文档会自动提取文本内容（图片会被忽略）
         - 文档应包含清晰的标题结构（如 ## 标题）
         
         **第二步：识别模块**
@@ -184,49 +186,137 @@ with tab1:
     # 检查是否有已上传的文档（数据恢复）
     has_uploaded_content = 'uploaded_content' in st.session_state and st.session_state.get('uploaded_content')
     
-    uploaded_file = st.file_uploader(
-        "选择需求文档",
-        type=['md', 'txt', 'docx'],
-        help="支持格式：Markdown (.md)、文本文件 (.txt)、Word文档 (.docx)"
+    uploaded_files = st.file_uploader(
+        "选择需求文档（最多3个文件）",
+        type=['md', 'txt', 'docx', 'pdf'],
+        accept_multiple_files=True,
+        help="支持格式：Markdown (.md)、文本文件 (.txt)、Word文档 (.docx)、PDF文档 (.pdf)。最多可同时上传3个文档，系统会自动合并处理。"
     )
     
-    # 如果有新上传的文件，处理它
-    if uploaded_file:
-        # 根据文件类型读取内容
+    # 定义文件读取函数
+    def read_file_content(uploaded_file):
+        """读取单个文件的内容"""
         file_extension = uploaded_file.name.split('.')[-1].lower()
         
-        if file_extension == 'docx':
-            # 读取Word文档
-            from docx import Document
-            import io
-            doc = Document(io.BytesIO(uploaded_file.read()))
-            content = '\n'.join([paragraph.text for paragraph in doc.paragraphs])
-        elif file_extension in ['md', 'txt']:
-            # 读取文本文件
-            content = uploaded_file.read().decode('utf-8')
-        else:
-            st.error(f"不支持的文件格式: {file_extension}")
+        try:
+            if file_extension == 'docx':
+                # 读取Word文档
+                from docx import Document
+                import io
+                doc = Document(io.BytesIO(uploaded_file.read()))
+                content = '\n'.join([paragraph.text for paragraph in doc.paragraphs])
+            elif file_extension == 'pdf':
+                # 读取PDF文档（只提取文本，忽略图片）
+                import pdfplumber
+                import io
+                pdf_bytes = io.BytesIO(uploaded_file.read())
+                content = ''
+                with pdfplumber.open(pdf_bytes) as pdf:
+                    for page in pdf.pages:
+                        page_text = page.extract_text()
+                        if page_text:
+                            content += page_text + '\n'
+                
+                if not content.strip():
+                    return None, "PDF文件中未找到可提取的文本内容"
+            elif file_extension in ['md', 'txt']:
+                # 读取文本文件
+                content = uploaded_file.read().decode('utf-8')
+            else:
+                return None, f"不支持的文件格式: {file_extension}"
+            
+            return content, None
+        except Exception as e:
+            return None, f"文件读取失败: {str(e)}"
+    
+    # 如果有新上传的文件，处理它们
+    if uploaded_files:
+        # 检查文件数量限制
+        if len(uploaded_files) > 3:
+            st.error(f"❌ 最多只能上传3个文件，当前选择了 {len(uploaded_files)} 个文件")
+            st.warning("💡 提示：请重新选择，最多选择3个文档")
+            st.stop()
+        
+        all_content = ''
+        file_names = []
+        has_error = False
+        
+        # 显示上传的文件列表
+        st.info(f"📁 已选择 {len(uploaded_files)} 个文件")
+        
+        # 处理每个文件
+        for i, uploaded_file in enumerate(uploaded_files, 1):
+            file_names.append(uploaded_file.name)
+            
+            # 读取文件内容
+            content, error = read_file_content(uploaded_file)
+            
+            if error:
+                st.error(f"❌ {uploaded_file.name}: {error}")
+                has_error = True
+                continue
+            
+            # 添加文档分隔标记
+            if i > 1:
+                all_content += '\n\n' + '='*80 + '\n\n'
+            
+            all_content += f'# 文档 {i}: {uploaded_file.name}\n\n'
+            all_content += content
+            
+            st.success(f"✅ 已读取: {uploaded_file.name}")
+        
+        # 如果有错误，停止处理
+        if has_error:
+            st.warning("💡 提示：请修复错误的文件后重新上传")
+            st.stop()
+        
+        # 检查合并后的内容
+        if not all_content.strip():
+            st.error("❌ 所有文件都没有可提取的内容")
             st.stop()
         
         # 存储到 session state
-        st.session_state['uploaded_content'] = content
-        st.session_state['uploaded_filename'] = uploaded_file.name
-        st.session_state['file_type'] = file_extension
+        st.session_state['uploaded_content'] = all_content
+        st.session_state['uploaded_filename'] = f"{len(file_names)}个文档"
+        st.session_state['uploaded_filenames'] = file_names
+        st.session_state['file_type'] = 'multiple'
         
-        st.success(f"✅ 已上传: {uploaded_file.name}")
-        st.text_area("文档预览", content[:500] + "...", height=200)
+        st.divider()
+        
+        # 显示合并后的预览
+        st.subheader("📄 文档内容预览")
+        preview_length = min(1000, len(all_content))
+        preview_text = all_content[:preview_length]
+        if len(all_content) > preview_length:
+            preview_text += "\n\n... (内容过长，仅显示前1000字符)"
+        
+        st.text_area("合并后的文档内容", preview_text, height=300, key="merged_preview")
     
     # 如果没有新上传但有已保存的内容，显示它
     elif has_uploaded_content:
         content = st.session_state['uploaded_content']
         filename = st.session_state.get('uploaded_filename', '未知文件')
+        file_names = st.session_state.get('uploaded_filenames', [])
         file_extension = st.session_state.get('file_type', 'txt')
         
         st.info(f"📄 已加载文档: {filename}")
-        st.text_area("文档预览", content[:500] + "...", height=200)
+        
+        # 如果是多文档，显示文件列表
+        if file_names and len(file_names) > 1:
+            with st.expander(f"📋 查看文档列表 ({len(file_names)} 个)", expanded=False):
+                for i, name in enumerate(file_names, 1):
+                    st.text(f"{i}. {name}")
+        
+        # 显示预览
+        preview_length = min(1000, len(content))
+        preview_text = content[:preview_length]
+        if len(content) > preview_length:
+            preview_text += "\n\n... (内容过长，仅显示前1000字符)"
+        
+        st.text_area("文档预览", preview_text, height=200)
     
     # 只有在有文档内容时才显示识别按钮
-    if has_uploaded_content or uploaded_file:
+    if has_uploaded_content or uploaded_files:
         st.divider()
         
         # 模块识别按钮（如果还未识别）
@@ -543,6 +633,22 @@ with tab2:
                     summary_ws.column_dimensions['H'].width = 12
                     summary_ws.column_dimensions['I'].width = 30
                     
+                    # 定义清理Sheet名称的函数
+                    def clean_sheet_name(name):
+                        """清理Excel Sheet名称，移除非法字符并限制长度"""
+                        # Excel不允许的字符: / \ ? * [ ] :
+                        # 将 / 和 \ 替换为 -，其他非法字符删除
+                        cleaned = name.replace('/', '-').replace('\\', '-').replace('?', '').replace('*', '').replace('[', '').replace(']', '').replace(':', '-')
+                        # 移除前后空格
+                        cleaned = cleaned.strip()
+                        # 如果名称为空，使用默认名称
+                        if not cleaned:
+                            cleaned = 'Sheet'
+                        # 限制长度为31字符
+                        if len(cleaned) > 31:
+                            cleaned = cleaned[:31]
+                        return cleaned
+                    
                     # 填充汇总数据
                     row_num = 2
                     for module_name, cases in cases_by_module.items():
@@ -551,8 +657,8 @@ with tab2:
                         medium = sum(1 for c in cases if c.get('优先级') == '中')
                         low = sum(1 for c in cases if c.get('优先级') == '低')
                         
-                        # 安全的Sheet名称（不超过31字符）
-                        safe_sheet_name = module_name[:31] if len(module_name) > 31 else module_name
+                        # 使用清理函数获取安全的Sheet名称
+                        safe_sheet_name = clean_sheet_name(module_name)
                         
                         # 添加公式计算完成数量和完成率
                         complete_formula = f"=COUNTIF('{safe_sheet_name}'!H:H,\"是\")+COUNTIF('{safe_sheet_name}'!H:H,\"否\")"
@@ -579,8 +685,8 @@ with tab2:
                     col_widths = [12, 18, 20, 20, 35, 8, 40, 12, 25]
                     
                     for module_name, cases in cases_by_module.items():
-                        # 创建Sheet（Sheet名称不超过31字符）
-                        sheet_name = module_name[:31] if len(module_name) > 31 else module_name
+                        # 创建Sheet（使用清理后的名称）
+                        sheet_name = clean_sheet_name(module_name)
                         ws = wb.create_sheet(sheet_name)
                         
                         # 写入表头
@@ -694,7 +800,7 @@ with tab2:
         
         #### 基本流程
         
-        1. **上传文档** - 在左侧上传需求文档（支持 .md, .txt, .docx 格式）
+        1. **上传文档** - 在左侧上传需求文档（支持 .md, .txt, .docx, .pdf 格式，可同时上传多个）
         2. **识别模块** - 点击"模块/页面识别"按钮，系统会自动识别文档中的模块
         3. **选择模块** - 勾选需要生成用例的模块，可使用"全选"/"全不选"快捷操作
         4. **选择建议选项** - 根据测试需求选择建议的测试类别（可选）
